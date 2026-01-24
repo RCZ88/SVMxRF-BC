@@ -20,8 +20,7 @@ data = pd.read_csv(f"C:\\Users\\ASUS\\PycharmProjects\\MachineLearning\\FINAL SV
 data.drop('id', axis=1, inplace=True)
 print(data)
 
-
-finalColIndex = 0
+TARGET_COL = 'diagnosis'
 startColIndex:int = 2
 sampleRowCount:int = 300
 numberOfBootstraps:int = 20
@@ -118,10 +117,10 @@ def findBestFilter(data, finalCol:str):
     print(data)
     dataGathered = []
     data_array = data.drop(columns=[finalCol])
-    data
-    for i in range(len(data_array)): #column
+    for i in range(len(data_array.columns)): #column
+        feature_name = data_array.columns[i]
         for j in range(len(data)):  # row
-            sortVal = data.iloc[j, i]
+            sortVal = data.iloc[j][feature_name]
             left, right = data[data.iloc[:, i] <= sortVal], data[data.iloc[:, i] > sortVal]
             print(f"Var: {data.columns[i]} <= {sortVal} ")
             ig = getInformationGain(left, right, data, finalCol)
@@ -130,7 +129,7 @@ def findBestFilter(data, finalCol:str):
             print(f"Information Gained: {ig}\n")
     maxIGData, found = getMax(dataGathered)
     if found:
-        print(f'Max Information Gain: {maxIGData.toString()}')
+        print(f'Max Information Gain: {maxIGData}')
     return maxIGData, found
 
 def depthLimitReached(data, finalCol:str):
@@ -174,6 +173,7 @@ def buildTree(data, finalColName:str, maxDepth, branchCount = 1, tree:Tree = Non
                 tree.left = Tree(dataPostFilter=afterSort.left, filter=afterSort,
                                  display=depthLimitReached(afterSort.left, finalColName), parent=tree,
                                  finalColName=finalColName)
+                print(tree.toString())
         else:
             tree.left = Tree(dataPostFilter=afterSort.left, filter=afterSort, parent=tree, finalColName=finalColName)
             print(tree.toString())
@@ -190,7 +190,10 @@ def buildTree(data, finalColName:str, maxDepth, branchCount = 1, tree:Tree = Non
                 print(tree.toString())
                 tree.right = buildTree(tree.right.dataPostFilter, finalColName, maxDepth, branchCount + 1, tree.right)
             else:
-                tree.right = Tree()
+                tree.right = Tree(dataPostFilter=afterSort.right, filter=afterSort,
+                                  display=depthLimitReached(afterSort.right, finalColName), parent=tree,
+                                  finalColName=finalColName)
+                print(tree.toString())
         else:
             tree.right = Tree(dataPostFilter=afterSort.right, filter=afterSort, parent=tree, finalColName=finalColName)
             print(tree.toString())
@@ -200,25 +203,24 @@ def buildTree(data, finalColName:str, maxDepth, branchCount = 1, tree:Tree = Non
 
 # findBestSort(data, startColIndex, finalColIndex)
 
-sampleData = data.head(sampleRowCount)
-excludeFinalCol = sampleData.drop(columns = data.columns[finalColIndex])
-finalColName = sampleData.columns[finalColIndex]
-finalColData = sampleData[finalColName]
-
-def createForest(numberOfBootstraps, maxDepth, varPerBootstrap):
-
+def createForest(selectedData, numberOfBootstraps, maxDepth, varPerBootstrap):
+    finalColName = TARGET_COL
     treeBootstraps = []
     startTime = time.time()
+    n_samples = len(selectedData)
     for i in range(numberOfBootstraps):
-        rand_columns = excludeFinalCol.sample(n=varPerBootstrap, axis=1)  # get the random columns
-        rand_columns.insert(0, finalColName, finalColData)
+        rand_rows = np.random.choice(n_samples, n_samples, replace=True)
+        bootstrap_data= selectedData.iloc[rand_rows]
+
+        rand_columns = get_excludeFinalCol(bootstrap_data).sample(n=varPerBootstrap, axis=1)  # get the random columns
+        rand_columns = pd.concat([rand_columns, get_finalColData(bootstrap_data, TARGET_COL)], axis=1)
         print(f'#{i}-Random Tree: ')
         for col in rand_columns.columns:
             print(f"{col} ", end="")
         tree = buildTree(rand_columns, finalColName, maxDepth)
         treeBootstraps.append(tree)
     endTime = time.time()
-    randomForest = Forest(treeBootstraps, maxDepth)
+    randomForest = Forest(treeBootstraps, maxDepth, varPerBootstrap)
     print(f"Time Taken: {(endTime - startTime):.6f} seconds")
     return randomForest
 
@@ -228,7 +230,7 @@ def useDTM(selectedTestData, dtm:Tree, row:int):
     count = 0
     while dtm.left is not None and dtm.right is not None:
         count+=1
-        compareVar = dtm.filter.var
+        compareVar = dtm.filter.varIndex
         compareVal = dtm.filter.value
         #print(compareVar, compareVal)
         if dataOfRow[compareVar] <= compareVal:
@@ -277,11 +279,12 @@ def crossValidation(k, selectedTestData:DataFrame, numOfBootstraps, maxDepth, va
     allForest = []
     for i in range(k):
         print(f"CREATING FOREST FOR: trainData{i}")
-        forest:Forest = createForest(numOfBootstraps, maxDepth, varPerBootstrap)
+        forest:Forest = createForest(trainData[i], numOfBootstraps, maxDepth, varPerBootstrap)
         allForest.append(forest)
         for j in range(testData[i].shape[0]):
             result = exploreForest(testData[i], forest, j)
-            confusionMatrix[getConfusionCategory(result, data.iloc[j, finalColIndex])] += 1
+            test_target_values = testData[i][TARGET_COL]
+            confusionMatrix[getConfusionCategory(result, test_target_values.iloc[j])] += 1
     metrics = getMetrics(confusionMatrix)
     print(f'metrics: {metrics}')
     generalStoreForest = ResultData(allForest, confusionMatrix, metrics)
@@ -312,10 +315,7 @@ def getMetrics(confusionMatrix:dict[str:int]):
     f1_score = 2 * precision * recall / (precision + recall)
     return {'ACCURACY':accuracy, 'PRECISION':precision, 'RECALL':recall, 'F1SCORE':f1_score}
 
-varCount = excludeFinalCol.shape[1]
-varPerTree = math.floor(math.sqrt(varCount))
-hyperparameters = {"Variable Amount: ": [varPerTree], "Boostrap Amount: ": [15 * i for i in range(1,5)], "Max Depth: ": [None, 5, 10, 20, 30, 50]}
-h = {"Variable Amount: ": [varPerTree], "Boostrap Amount: ": [5,10, 15, 20], "Max Depth: ": [10, None]}
+
 
 def hyperparameterTuning(data, hyperparameters:dict[str:int], k):
     variableAmount = hyperparameters["Variable Amount: "]
@@ -349,8 +349,28 @@ def create_summary_filename(hyperparams):
     filename = "_".join(parts) + ".txt"
     return filename
 
+
+def get_excludeFinalCol(data):
+    return data.drop(columns=[TARGET_COL])
+
+def get_finalColName(data, finalColIndex):
+    return data.columns[finalColIndex]
+
+def get_finalColData(data, finalColName):
+    return data[finalColName]
+
+def get_varCount(data):
+    return get_excludeFinalCol(data).shape[1]
+
+sampleData = data.head(sampleRowCount)
+
+varCount = get_varCount(sampleData)
+varPerTree = math.floor(math.sqrt(varCount))
+hyperparameters = {"Variable Amount: ": [varPerTree], "Boostrap Amount: ": [15 * i for i in range(1,5)], "Max Depth: ": [None, 5, 10, 20, 30, 50]}
+h = {"Variable Amount: ": [varPerTree], "Boostrap Amount: ": [5,10, 15, 20], "Max Depth: ": [10, None]}
+
 startTime = time.time()
-fileObj = hyperparameterTuning(data.sample(n=450), h, 5)
+fileObj = hyperparameterTuning(sampleData, h, 5)
 endTime = time.time()
 
 timeTaken = endTime - startTime

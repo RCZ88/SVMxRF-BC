@@ -12,7 +12,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from scipy import stats
 from svmOBJ import *
 from ResultData import ResultData
-from TuningDataStatistics import *
+from NLObject import *
 from index import *
 from tools import *
 
@@ -22,7 +22,7 @@ methods = ['cv', 'noncv']
 
 # Load data
 dataFileName = 'Breast Cancer Wisconsin DB'
-data = pd.read_csv(f'C:\\Users\\ASUS\\PycharmProjects\\MachineLearning\\FINAL SVM & RF\\{dataFileName}.csv')
+data = pd.read_csv(f'{dataFileName}.csv')
 outcomeReference = {'M': -1, 'B': 1}
 data['diagnosis'] = data['diagnosis'].map(outcomeReference)
 
@@ -37,25 +37,22 @@ sampleData = sampleData.sample(n=n, random_state=42)
 sampleFileName = f'SD{dataFileName}SS{n}X{len(x_indexes)}'
 varCount = len(x_indexes)
 
-#
-#
-# sampleFileName += 'SCALED'
-#
-#
-# scaler = StandardScaler()
-# X_scaled = scaler.fit_transform(sampleData.iloc[:, :-1].values)
-#
-# pcaComponents = 10
-# pca = PCA(n_components=pcaComponents)
-# X_pca = pca.fit_transform(X_scaled)
-# print(f"Explained variance ratio: {sum(pca.explained_variance_ratio_):.4f}")
-#
-# pca_columns = [f'PC{i+1}' for i in range(X_pca.shape[1])]
-# x_indexes = [i for i in range(1, X_pca.shape[1]+1)]
-# sampleData_pca = pd.DataFrame(X_pca, columns=pca_columns)
-# sampleData_pca['diagnosis'] = sampleData['diagnosis'].values
-# sampleData = sampleData_pca  # Replace original data with PCA-transformed data
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(sampleData.iloc[:, :-1].values)
+
+sampleFileName += 'SCALED'
+
 pcaComponents = 10
+pca = PCA(n_components=pcaComponents)
+X_pca = pca.fit_transform(X_scaled)
+print(f"Explained variance ratio: {sum(pca.explained_variance_ratio_):.4f}")
+
+pca_columns = [f'PC{i+1}' for i in range(X_pca.shape[1])]
+x_indexes = [i for i in range(1, X_pca.shape[1]+1)]
+sampleData_pca = pd.DataFrame(X_pca, columns=pca_columns)
+sampleData_pca['diagnosis'] = sampleData['diagnosis'].values
+sampleData = sampleData_pca  # Replace original data with PCA-transformed data
 varCount = pcaComponents
 
 sampleFileName += f'PCA{pcaComponents}'
@@ -275,13 +272,10 @@ def do_RBF(data, x, y, matrixSize, gamma = -1.0, pP = False, C= 1):
     if pP:
         print(f'b: {b}')
     equation = ''
-    num_features =  x.shape[1]  # Get the actual number of features from the PCA data
-    if num_features <= 3:
+    if varCount <= 3:
         xyz = ['x', 'y', 'z']
     else:
         xyz = [f'x{i}' for i in range(30)]
-
-
     for i in range(data.shape[0]):
         num = alphas[i] * y[i]
         formatted_num = format_scientific(num)
@@ -298,14 +292,14 @@ def do_RBF(data, x, y, matrixSize, gamma = -1.0, pP = False, C= 1):
 
         equation += f' * e^{{-{formatted_gamma}('
 
-        for j in range(num_features):  # Use num_features instead of len(x_indexes)
+        for j in range(len(x_indexes)):
             equation += f'({x[i, j]:.3f} - '
-            if num_features > 3:
+            if len(x_indexes) > 3:
                 equation += f'x{j + 1})^2 '
             else:
                 equation += f'{xyz[j]})^2 '
 
-            if j != num_features - 1:
+            if j != len(x_indexes) - 1:
                 equation += ' + '
 
         equation += ')}'
@@ -318,7 +312,6 @@ def do_RBF(data, x, y, matrixSize, gamma = -1.0, pP = False, C= 1):
         equation += f' + {formatted_b}'
 
     equation += ' = 0'
-    print(equation)
     return equation, d
 
 
@@ -392,7 +385,7 @@ def do_Polynomial(data, x, y, matrixSize, c=1, d =2, pP=False, C=1):
         equation += f' - {format_scientific(abs(b))}'
     equation += ' = 0'
     # print(type(equation))
-    print(equation)
+
     return equation, d
 
 
@@ -486,8 +479,11 @@ def do_Linear(data, x, y, matrixSize, C=1):
             Y = y[i]
             X = x[i,j]
             W[j] += A * Y * X
+    print(f'W: {W}')
     support_vectors = [i for i, alpha in enumerate(alphas) if alpha > 1e-5]
     row = support_vectors[0]
+    print('row:')
+    print(row)
     sumWX = 0
     for i in range(len(W)):
         sumWX += W[i] * x[row, i]
@@ -509,7 +505,6 @@ def do_Linear(data, x, y, matrixSize, C=1):
     if b > 0:
         equation += ' + '
     equation += f'{b} = 0'
-    print(equation)
     return equation, obj
 
 # def testPoly():
@@ -526,125 +521,100 @@ def do_Linear(data, x, y, matrixSize, C=1):
 
 
 def crossValidation(data, k, kernel: str, gamma=0.1, c=0, d=2, a=0.1, C=1) -> ResultData:
-    """
-    Performs k-fold cross validation with proper shuffling
+    # Total number of rows in data
+    n = data.shape[0]
+    binSize = int(n / k)
+    bins = [None] * k  # Initialize list of k bins
 
-    Parameters:
-    - data: Pandas DataFrame containing features and target
-    - k: Number of folds
-    - kernel: SVM kernel type
-    - gamma, c, d, a, C: Kernel parameters
-
-    Returns:
-    - ResultData object containing evaluation metrics
-    """
-
-    # ===== 1. SHUFFLE DATA PROPERLY =====
-    # Shuffle indices while keeping DataFrame structure
-    shuffled_data = data.sample(frac=1, random_state=42).copy()
-    n = len(shuffled_data)
-    binSize = n // k
-
-    # Initialize metrics
-    confusionMatrix = {'TP': 0, 'TN': 0, 'FP': 0, 'FN': 0}
-    totalPercentages = 0.0
-
-    # ===== 2. K-FOLD VALIDATION =====
+    # Create k bins of equal size
     for i in range(k):
-        # Create test mask
-        test_mask = np.zeros(n, dtype=bool)
-        test_mask[i * binSize:(i + 1) * binSize] = True
+        rows = list(range(i * binSize, i * binSize + binSize))
+        bins[i] = data.iloc[rows].copy()  # copy() to ensure independent DataFrames
+        # Debug print for each bin
+        # print(f'bins[{i}]:\n{bins[i]}\n')
 
-        # Split data
-        testData = shuffled_data[test_mask]
-        trainData = shuffled_data[~test_mask]
+    totalPercentages = 0.0
+    # For each fold
+    for i in range(k):
+        # Use the i-th bin as test data; all others as training data
+        testData = bins[i]
+        # print(f'TestData#{i}:\n{testData}')
+        trainData = []
+        for j in range(k):
+            if j != i:
+                trainData.append(bins[j])
+        combinedTrainData = pd.concat(trainData, axis=0)
 
-        # ===== 3. PREPROCESSING =====
-        # Fit scaler and PCA on training data only
-        scaler = StandardScaler()
-        pca = PCA(n_components=10)
+        # print(f'combinedTrainData:\n{combinedTrainData}\n')
 
-        X_train = trainData.iloc[:, :-1].values
-        y_train = trainData.iloc[:, -1].values
-
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_train_pca = pca.fit_transform(X_train_scaled)
-
-        # Transform test data
-        X_test = testData.iloc[:, :-1].values
-        X_test_scaled = scaler.transform(X_test)
-        X_test_pca = pca.transform(X_test_scaled)
-
-        # Create transformed DataFrames
-        train_transformed = pd.DataFrame(X_train_pca)
-        train_transformed['diagnosis'] = y_train
-
-        test_transformed = pd.DataFrame(X_test_pca)
-        test_transformed['diagnosis'] = testData.iloc[:, -1].values
-
-        # ===== 4. TRAIN AND EVALUATE =====
+        # Extract features and labels from training data
+        X_train = getX(combinedTrainData)
+        Y_train = getY(combinedTrainData)
+        # Create model object based on kernel
         if kernel == 'RBF':
-            _, obj = do_RBF(train_transformed, X_train_pca, y_train, len(trainData), gamma=gamma, C=C)
+            # obj = getObj(combinedTrainData, kernel, X_train, Y_train, gamma=gamma)
+            _, obj = do_RBF(combinedTrainData, getX(combinedTrainData), getY(combinedTrainData), combinedTrainData.shape[0], pP=False, gamma=gamma, C=C)
         elif kernel == 'Polynomial':
-            _, obj = do_Polynomial(train_transformed, X_train_pca, y_train, len(trainData), c=c, d=d, C=C)
+            # obj = getObj(combinedTrainData, kernel, X_train, Y_train, c=c, d=d)
+            _, obj= do_Polynomial(combinedTrainData, getX(combinedTrainData), getY(combinedTrainData), combinedTrainData.shape[0], pP=False, c=c, d=d, C=C)
         elif kernel == 'Sigmoid':
-            _, obj = do_Sigmoid(train_transformed, X_train_pca, y_train, len(trainData), a=a, c=c, C=C)
+            # obj = getObj(combinedTrainData, kernel, X_train, Y_train, c=c, a=a)
+            _, obj = do_Sigmoid(combinedTrainData, getX(combinedTrainData), getY(combinedTrainData), combinedTrainData.shape[0], c=c, a=a, C=C)
         elif kernel == 'Linear':
-            _, obj = do_Linear(train_transformed, X_train_pca, y_train, len(trainData), C=C)
+            _, obj = do_Linear(combinedTrainData, X_train, Y_train, combinedTrainData.shape[0], C=C)
+        else:
+            obj = None
 
-        # Evaluate
-        fold_true_count = 0
-        for j in range(len(test_transformed)):
-            xTest = test_transformed.iloc[j, :-1].values.reshape(1, -1)
-            prediction = predict(obj.calculate(xTest))
-            actual = test_transformed.iloc[j, -1]
 
-            if prediction == actual:
-                fold_true_count += 1
-                if prediction == 1:
-                    confusionMatrix['TP'] += 1
+        # Evaluate on test set:
+        true_count = 0
+        false_count = 0
+        confusionMatrix = {'TP':0, 'TN':0, 'FP':0, 'FN':0}
+        for j in range(testData.shape[0]):
+            # Get the j-th row as a DataFrame (so getX/getY work correctly)
+            row_df = testData.iloc[[j]]
+            xTestData = getX(row_df)
+            # print(f'xTestData: {xTestData}')
+            # Here, predict() and obj.calculate() must be defined appropriately.
+            if obj is not None:
+                prediction = predict(obj.calculate(xTestData))
+                actual = getY(row_df)
+                if prediction == actual:
+                    true_count += 1
+                    if prediction == 1:
+                        confusionMatrix['TP'] += 1
+                    else:
+                        confusionMatrix['TN'] += 1
                 else:
-                    confusionMatrix['TN'] += 1
-            else:
-                if prediction == 1:
-                    confusionMatrix['FP'] += 1
-                else:
-                    confusionMatrix['FN'] += 1
+                    false_count += 1
+                    if prediction == 1:
+                        confusionMatrix['FP'] += 1
+                    else:
+                        confusionMatrix['FN'] += 1
+        print(f'T: {true_count}, F: {false_count}')
+        totalPercentages += true_count / testData.shape[0]
 
-        fold_accuracy = fold_true_count / len(test_transformed)
-        print(f'Fold {i + 1} Accuracy: {fold_accuracy:.2%}')
-        totalPercentages += fold_accuracy
-
-    # ===== 5. FINAL MODEL TRAINING =====
-    # Preprocess full dataset
-    X_full = data.iloc[:, :-1].values
-    y_full = data.iloc[:, -1].values
-
-    scaler_final = StandardScaler().fit(X_full)
-    X_full_scaled = scaler_final.transform(X_full)
-    pca_final = PCA(n_components=10).fit(X_full_scaled)
-    X_full_pca = pca_final.transform(X_full_scaled)
-
-    data_transformed = pd.DataFrame(X_full_pca)
-    data_transformed['diagnosis'] = y_full
-
-    # Train final model
+    # Finally, build an object on the whole data for later use:
+    eq, wholeDataObj = '', None
     if kernel == 'RBF':
-        eq, wholeDataObj = do_RBF(data_transformed, X_full_pca, y_full, len(data), gamma=gamma, C=C)
+        # wholeDataObj = getObj(data, kernel, getX(data), getY(data), gamma=gamma, C=C)
+        eq, wholeDataObj = do_RBF(data, getX(data), getY(data), data.shape[0], pP = False,  gamma=gamma, C=C)
     elif kernel == 'Polynomial':
-        eq, wholeDataObj = do_Polynomial(data_transformed, X_full_pca, y_full, len(data), c=c, d=d, C=C)
+        # wholeDataObj = getObj(data, kernel, getX(data, True), getY(data), c=c, d=d, C=C)
+        eq, wholeDataObj = do_Polynomial(data, getX(data), getY(data), data.shape[0], pP= False, c= c, d = d, C=C)
     elif kernel == 'Sigmoid':
-        eq, wholeDataObj = do_Sigmoid(data_transformed, X_full_pca, y_full, len(data), a=a, c=c, C=C)
+        # wholeDataObj = getObj(data, kernel, getX(data, True), getY(data), c=c, a=a, C=C)
+        eq, wholeDataObj = do_Sigmoid(data, getX(data), getY(data), data.shape[0], c=c, a=a, C=C)
     elif kernel == 'Linear':
-        eq, wholeDataObj = do_Linear(data_transformed, X_full_pca, y_full, len(data), C=C)
-
-    # Calculate metrics
-    avg_accuracy = totalPercentages / k
-    print(f'Average Cross-Validation Accuracy: {avg_accuracy:.2%}')
-
+        eq, wholeDataObj = do_Linear(data, getX(data), getY(data), data.shape[0], C=C)
+    else:
+        wholeDataObj = None
+    # return totalPercentages / k * 100.0,  wholeDataObj
     rd = ResultData(eq, wholeDataObj, confusionMatrix)
     rd.setMetrics(getMetrics(confusionMatrix))
+    print(f'Metrics: {getMetrics(confusionMatrix)}')
     return rd
+
 
 def getObj(data, kernel, x, y, gamma=-1.0, c=0, d=2, a=0.1, C=1):
 
@@ -801,7 +771,7 @@ results = tuneHyperparameter(sampleData, 5, 'cv')#arrays of result data
 endTime = time.time()
 
 objFileName = f'{results[0].toString(printType.FILENAME)}.SO'
-objFile = SVMTuningStatistics(results, hyperparameters, 'Cross Validation', int(4 / 5 * n), int(1 / 5 * n))
+objFile = NLObject(results, hyperparameters, 'Cross Validation', int(4/5 * n), int(1/5 * n))
 with open(objFileName, "wb") as file:
     pickle.dump(objFile, file)
 

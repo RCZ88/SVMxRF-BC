@@ -1,9 +1,9 @@
-from TuningDataStatistics import SVMTuningStatistics
+from NLObject import NLObject
 from index import *
 from svmOBJ import *
 
 
-def printStats(resultFile:SVMTuningStatistics, printAll:bool = False, sortBy:metricsType = None):
+def printStats(resultFile:NLObject, printAll:bool = False, sortBy:metricsType = None):
     resultDatas = resultFile.datas
     hyperparameters = resultFile.hyperparameters
     if printAll:

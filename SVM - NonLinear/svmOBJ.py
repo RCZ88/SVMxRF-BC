@@ -97,8 +97,10 @@ class Linear(svmOBJ):
         self.C = C
     def calculate(self, x):
         sum = 0
+        print(x)
+        print(self.w)
         for i in range(len(self.w)):
-            sum += x[0, i] * self.w[i]
+            sum += x[0, [i]] * self.w[i]
         sum += self.b
         return sum
     def toString(self):
